@@ -11,6 +11,7 @@ found_major_version = ".".join(Metashape.app.version.split('.')[:2])
 if found_major_version != compatible_major_version:
     raise Exception("Incompatible Metashape version: {} != {}".format(found_major_version, compatible_major_version))
 
+
 class MojaAplikacja(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -27,7 +28,7 @@ class MojaAplikacja(QtWidgets.QMainWindow):
         self.ui.geodNetButton.clicked.connect(self.wybierz_plik_osnowy)
         self.ui.runButton.clicked.connect(self.uruchom_proces)
 
-        #konfiguracja
+        # konfiguracja
         self.required_green_markers = 3
         self.required_photos_measured = 3
         self.check_interval = 2000
@@ -42,7 +43,7 @@ class MojaAplikacja(QtWidgets.QMainWindow):
 
     def wybierz_plik_osnowy(self):
         plik, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Wybierz plik osnowy", "",
-                                              "Pliki tekstowe (*.txt *.csv);;Wszystkie pliki (*.*)")
+                                                        "Pliki tekstowe (*.txt *.csv);;Wszystkie pliki (*.*)")
         if plik:
             self.ui.fileEditLine2.setText(plik)
 
@@ -75,12 +76,18 @@ class MojaAplikacja(QtWidgets.QMainWindow):
             print("Lista zdjęć jest pusta.")
 
     def tellQualityInt(self, quality_type):
-        if quality_type == "Ultra low": return 8
-        elif quality_type == "Low": return 4
-        elif quality_type == "Medium": return 2
-        elif quality_type == "High": return 1
-        elif quality_type == "Ultra high": return 0.5
-        else: return ValueError("Nieznana jakość")
+        if quality_type == "Ultra low":
+            return 8
+        elif quality_type == "Low":
+            return 4
+        elif quality_type == "Medium":
+            return 2
+        elif quality_type == "High":
+            return 1
+        elif quality_type == "Ultra high":
+            return 0.5
+        else:
+            return ValueError("Nieznana jakość")
 
     def merge_markers(self):
         detected_markers = []
@@ -196,7 +203,8 @@ class MojaAplikacja(QtWidgets.QMainWindow):
         if fully_green >= self.required_green_markers:
             self.advanced_monitor_timer.stop()
             self.msg.setWindowTitle("Czas decyzji")
-            self.msg.setText("Czy chcesz kontynuować?\nTak - uruchomienie kolejnych etapów.\nNie - możliwość pomiaru dalszych punktów.")
+            self.msg.setText(
+                "Czy chcesz kontynuować?\nTak - uruchomienie kolejnych etapów.\nNie - możliwość pomiaru dalszych punktów.")
             self.msg.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
             self.msg.setDefaultButton(QtWidgets.QMessageBox.Yes)
             result = self.msg.exec_()
@@ -224,7 +232,7 @@ class MojaAplikacja(QtWidgets.QMainWindow):
         crs_photos = Metashape.CoordinateSystem(epsg_photos_full)
         crs_end = Metashape.CoordinateSystem(epsg_end_full)
         ####################################################################
-        
+
         if epsg_photos != epsg_end:
             for camera in self.chunk.cameras:
                 if not camera.reference.location: continue
@@ -234,10 +242,12 @@ class MojaAplikacja(QtWidgets.QMainWindow):
 
         self.chunk.crs = crs_end
         self.chunk.camera_crs = crs_end
+        self.chunk.marker_crs = crs_end
 
         Metashape.app.update()
 
-        self.chunk.matchPhotos(downscale=self.tellQualityInt(accuracy_match_photos), generic_preselection=False, reference_preselection=False)
+        self.chunk.matchPhotos(downscale=self.tellQualityInt(accuracy_match_photos), generic_preselection=False,
+                               reference_preselection=False)
         self.chunk.alignCameras()
 
         length = self.import_r_markers()
@@ -272,6 +282,7 @@ class MojaAplikacja(QtWidgets.QMainWindow):
         epsg_end_full = f"EPSG::{epsg_end}"
         crs_geo_net = Metashape.CoordinateSystem(epsg_geo_net_full)
         crs_end = Metashape.CoordinateSystem(epsg_end_full)
+        photo_path = self.ui.filePhotosEdit.text()
 
         _ = self.import_r_markers()
 
@@ -284,36 +295,66 @@ class MojaAplikacja(QtWidgets.QMainWindow):
                     final_marker_location = Metashape.CoordinateSystem.transform(marker_location, crs_geo_net, crs_end)
                     marker.reference.location = final_marker_location
 
-        self.chunk.marker_crs = crs_end
 
         self.merge_markers()
+        """
+        path = os.path.join(photo_path, "in_orient.xml")
+        sensor = self.chunk.sensors[0]
+        sensor.calibration.save(path, format=Metashape.CalibrationFormat.CalibrationFormatOpenCV)
 
+        nr = []
+        xyz = []
+
+        for marker in self.chunk.markers:
+            nr.append(marker.label)
+            x = marker.reference.location.x
+            y = marker.reference.location.y
+            z = marker.reference.location.z
+            xyz.append([x, y, z])
+
+        camera = self.chunk.cameras[0]
+        m = camera.transform
+
+        rotation_list = [
+            [m[0, 0], m[0, 1], m[0, 2]],
+            [m[1, 0], m[1, 1], m[1, 2]],
+            [m[2, 0], m[2, 1], m[2, 2]]
+        ]
+
+        translation_list = [m[0, 3], m[1, 3], m[2, 3]]
+        """
         self.export_eo()
 
         if self.ui.modelBox.isChecked():
             if accuracy_point_cloud == accuracy_model_3d:
-                self.chunk.buildDepthMaps(downscale=self.tellQualityInt(accuracy_point_cloud), filter_mode=Metashape.AggressiveFiltering)
+                self.chunk.buildDepthMaps(downscale=self.tellQualityInt(accuracy_point_cloud),
+                                          filter_mode=Metashape.AggressiveFiltering)
                 if self.ui.cloudPointBox.isChecked():
                     self.chunk.buildPointCloud()
-                self.chunk.buildModel(source_data=Metashape.DepthMapsData, surface_type=Metashape.Arbitrary,interpolation=Metashape.EnabledInterpolation)
+                self.chunk.buildModel(source_data=Metashape.DepthMapsData, surface_type=Metashape.Arbitrary,
+                                      interpolation=Metashape.EnabledInterpolation)
                 self.chunk.buildUV(mapping_mode=Metashape.GenericMapping)
             else:
                 if self.ui.cloudPointBox.isChecked():
-                    self.chunk.buildDepthMaps(downscale=self.tellQualityInt(accuracy_point_cloud), filter_mode=Metashape.AggressiveFiltering)
+                    self.chunk.buildDepthMaps(downscale=self.tellQualityInt(accuracy_point_cloud),
+                                              filter_mode=Metashape.AggressiveFiltering)
                     self.chunk.buildPointCloud()
-                self.chunk.buildDepthMaps(downscale=self.tellQualityInt(accuracy_model_3d),filter_mode=Metashape.AggressiveFiltering)
-                self.chunk.buildModel(source_data=Metashape.DepthMapsData, surface_type=Metashape.Arbitrary, interpolation=Metashape.EnabledInterpolation)
+                self.chunk.buildDepthMaps(downscale=self.tellQualityInt(accuracy_model_3d),
+                                          filter_mode=Metashape.AggressiveFiltering)
+                self.chunk.buildModel(source_data=Metashape.DepthMapsData, surface_type=Metashape.Arbitrary,
+                                      interpolation=Metashape.EnabledInterpolation)
                 self.chunk.buildUV(mapping_mode=Metashape.GenericMapping)
 
-        #save document 
+        # save document
         document_name = "wtyka.psx"
-        photo_path = self.ui.filePhotosEdit.text()
         document_path = os.path.join(photo_path, document_name)
         self.doc.save(document_path)
 
         self.close()
 
+
 app_window = None
+
 
 def show_window():
     global app_window
@@ -323,7 +364,9 @@ def show_window():
 
     app_window.show()
 
+
 def init_menu():
     Metashape.app.addMenuItem("FTP", show_window)
+
 
 init_menu()
