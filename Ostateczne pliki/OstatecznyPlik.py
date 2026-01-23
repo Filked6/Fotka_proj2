@@ -4,6 +4,8 @@ import glob
 import math
 from SkryptUi import Ui_WtykaFTP
 import os
+import cv2
+import numpy as np
 
 # Checking compatibility
 compatible_major_version = "2.2"
@@ -297,10 +299,15 @@ class MojaAplikacja(QtWidgets.QMainWindow):
 
 
         self.merge_markers()
-        """
+
         path = os.path.join(photo_path, "in_orient.xml")
         sensor = self.chunk.sensors[0]
         sensor.calibration.save(path, format=Metashape.CalibrationFormat.CalibrationFormatOpenCV)
+
+        fs = cv2.FileStorage(path, cv2.FILE_STORAGE_READ)
+        K = fs.getNode("camera_matrix").mat()
+        dist = fs.getNode("distortion_coefficients").mat()
+        fs.release()
 
         nr = []
         xyz = []
@@ -312,17 +319,23 @@ class MojaAplikacja(QtWidgets.QMainWindow):
             z = marker.reference.location.z
             xyz.append([x, y, z])
 
+        xyz = np.array(xyz, dtype=np.float32)
+
         camera = self.chunk.cameras[0]
         m = camera.transform
 
-        rotation_list = [
+        rotation_list = np.array([
             [m[0, 0], m[0, 1], m[0, 2]],
             [m[1, 0], m[1, 1], m[1, 2]],
             [m[2, 0], m[2, 1], m[2, 2]]
-        ]
+        ], dtype=np.float32)
 
-        translation_list = [m[0, 3], m[1, 3], m[2, 3]]
-        """
+        translation_list = np.array([m[0, 3], m[1, 3], m[2, 3]], dtype=np.float32).reshape(-1, 1)
+
+        R = cv2.Rodrigues(rotation_list)
+
+        points_2d, _ = cv2.projectPoints(xyz, R, translation_list, K, dist)
+
         self.export_eo()
 
         if self.ui.modelBox.isChecked():
