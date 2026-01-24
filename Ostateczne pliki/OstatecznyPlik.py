@@ -25,9 +25,10 @@ class MyApp(QtWidgets.QMainWindow):
         else:
             self.chunk = self.doc.addChunk()
 
-        self.ui.photosButton.clicked.connect(self.wybierz_folder_zdjec)
-        self.ui.geodNetButton.clicked.connect(self.wybierz_plik_osnowy)
-        self.ui.runButton.clicked.connect(self.uruchom_proces)
+        # obsługa przycisków
+        self.ui.photosButton.clicked.connect(self.choose_photo_folder)
+        self.ui.geodNetButton.clicked.connect(self.choose_geonet_file)
+        self.ui.runButton.clicked.connect(self.start)
 
         # konfiguracja
         self.required_green_markers = 3
@@ -37,24 +38,26 @@ class MyApp(QtWidgets.QMainWindow):
         self.advanced_monitor_timer = QtCore.QTimer()
         self.msg = QtWidgets.QMessageBox()
 
-    def wybierz_folder_zdjec(self):
+    def choose_photo_folder(self):
+        #Okno do wyboru folderu ze zdjęciami
         folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Wybierz folder ze zdjęciami")
         if folder:
             self.ui.filePhotosEdit.setText(folder)
 
-    def wybierz_plik_osnowy(self):
+    def choose_geonet_file(self):
+        #Okno do wyboru pliku z punktami referencyjnymi
         plik, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Wybierz plik osnowy", "",
                                                         "Pliki tekstowe (*.txt *.csv);;Wszystkie pliki (*.*)")
         if plik:
             self.ui.fileEditLine2.setText(plik)
 
-    def uruchom_proces(self):
+    def start(self):
+        #Uruchomienie wszystkiego po kliknięciu przycisku na końcu
         print("Uruchomiono proces!")
         self.sfmImageProcessing()
-        self.przetwarzankoZDJ()
+        self.first_part()
 
     def getAllImagesList(self, path):
-        import os
         search_path = os.path.join(path, "*.jpg")
         files_jpg = glob.glob(search_path)
         return files_jpg
@@ -76,7 +79,17 @@ class MyApp(QtWidgets.QMainWindow):
         else:
             print("Lista zdjęć jest pusta.")
 
+    def show_info(self, message, time=10):
+        #Okienko z tekstem do pokazywania wiadomości
+        msg_w = QtWidgets.QMessageBox(self)
+        msg_w.setText(message)
+        msg_w.setStandardButtons(QtWidgets.QMessageBox.NoButton)
+        msg_w.setWindowFlags(QtCore.Qt.Window | QtCore.Qt.FramelessWindowHint)
+        msg_w.show()
+        QtCore.QTimer.singleShot(time * 1000, msg_w.close)
+
     def tellQualityInt(self, quality_type):
+        #Konwersja typu z tekstu na liczbę mu odpowiadającą
         if quality_type == "Ultra low":
             return 8
         elif quality_type == "Low":
@@ -91,19 +104,23 @@ class MyApp(QtWidgets.QMainWindow):
             return ValueError("Nieznana jakość")
 
     def merge_markers(self):
+        #Funkcja do łączenia markerów
         detected_markers = []
         reference_markers = []
         merged_dict = {}
 
         used_reference_labels = set()
 
+        #Przypisujemy aktualne markery do ich kategorii
         for marker in self.chunk.markers:
             if marker.label.startswith("point"):
                 detected_markers.append(marker)
             else:
                 reference_markers.append(marker)
 
+        #Początek łączenia
         for marker in detected_markers:
+            #Pozyskujemy współrzędne dla wykrytych markerów (układ lokalny)
             if marker.position:
                 pos_internal = marker.position
                 pos_geodetic = self.chunk.crs.project(self.chunk.transform.matrix.mulp(pos_internal))
@@ -114,6 +131,7 @@ class MyApp(QtWidgets.QMainWindow):
 
                 dist = []
                 for r_marker in reference_markers:
+                    #Pozyskujemy współrzędne dla markerów referencyjnych (normalny układ)
                     if r_marker.label in used_reference_labels:
                         continue
                     if not r_marker.reference.location:
@@ -124,10 +142,12 @@ class MyApp(QtWidgets.QMainWindow):
                     yr = source_location_r.y
                     zr = source_location_r.z
 
+                    #Obliczamy odległość euklidesową (najprostsza metoda chyba)
                     odl = math.sqrt((xr - xd) ** 2 + (yr - yd) ** 2 + (zr - zd) ** 2)
                     dist.append((odl, r_marker.label))
 
                 if dist:
+                    #Wybieramy ten z najmniejszą
                     lowest = min(dist)
                     min_dist = lowest[0]
                     best_match_label = lowest[1]
@@ -135,12 +155,15 @@ class MyApp(QtWidgets.QMainWindow):
                     merged_dict[marker.label] = best_match_label
                     used_reference_labels.add(best_match_label)
 
+                    #Informacja o połączonych, tak o
                     print(f"Dopasowano: {marker.label} -> {best_match_label} (dist: {min_dist:.3f})")
                 else:
                     print(f"Dla {marker.label} nie znaleziono wolnego markera referencyjnego.")
 
         markers_by_name = {m.label: m for m in self.chunk.markers}
 
+        #Aby móc je łatwo połączyć to zmieniamy im nazwę, aby miały taką samo to się połączą
+        #Punkt wykryty jest scalany z referencyjnym, aby uniknąć problemów
         for detected_name, reference_name in merged_dict.items():
             det_marker = markers_by_name.get(detected_name)
             ref_marker = markers_by_name.get(reference_name)
@@ -151,24 +174,11 @@ class MyApp(QtWidgets.QMainWindow):
 
                 self.chunk.remove(det_marker)
 
+        #Odświeżamy na wrazie w
         self.chunk.updateTransform()
 
-    def export_eo(self):
-        photo_path = self.ui.filePhotosEdit.text()
-        path = os.path.join(photo_path, "exteriorOrientation.txt")
-
-        self.chunk.exportReference(
-            path=path,
-            format=Metashape.ReferenceFormatCSV,
-            items=Metashape.ReferenceItemsCameras,
-            columns="nuvwdef",  # n=Label, u/v/w=estimated coordinates, d/e/f=estimated coordination angles
-            delimiter=",",
-            precision=6
-        )
-
-        print(f"Zapisano orientację do: {path}")
-
     def import_r_markers(self):
+        #Funkcja do importu markerów referencyjnych (tych z pliczku)
         geonet_path = self.ui.fileEditLine2.text()
         epsg_geo_net = self.ui.coordsEdit2.text()
         epsg_geo_net_full = f"EPSG::{epsg_geo_net}"
@@ -185,9 +195,8 @@ class MyApp(QtWidgets.QMainWindow):
             create_markers=True
         )
 
-        return len(self.chunk.markers)
-
     def count_ref_markers(self):
+        #Funkcja do liczenia ilości potrzebnych markerów (wyjaśnienie po co dalej)
         geonet_path = self.ui.fileEditLine2.text()
         marker_quantity = 0
         with open(geonet_path, 'r') as f:
@@ -211,6 +220,7 @@ class MyApp(QtWidgets.QMainWindow):
         fs.release()
         """
         print("Wykrywanie pozostałych punktów...")
+        #Pozyskanie parametrów
         sensor = self.chunk.sensors[0]
         calib = sensor.calibration
 
@@ -225,33 +235,38 @@ class MyApp(QtWidgets.QMainWindow):
 
         dist = np.array([calib.k1, calib.k2, calib.p1, calib.p2, calib.k3], dtype=np.float32)
 
+        #Rozpoczęcie fasta
         fast = cv2.FastFeatureDetector_create()
         fast.setThreshold(60)
         fast.setNonmaxSuppression(True)
 
+        #Pozyskujemy współrzędne dla każdego markera w układzie lokalnym
         for marker in self.chunk.markers:
             geo_location = marker.reference.location
             loc_internal = self.chunk.crs.unproject(geo_location)
 
             xyz = np.array([loc_internal.x, loc_internal.y, loc_internal.z], dtype=np.float32)
             for camera in self.chunk.cameras:
-                if not camera.transform:
+                #Dla każdej kamery wyciągamy parametry
+                if not camera.transform: #To ważne bo jak nie będzie miało to się wywali
                     continue
                 m = camera.transform.inv()
-                rotation_list = np.array([
+                rotation_param = np.array([
                     [m[0, 0], m[0, 1], m[0, 2]],
                     [m[1, 0], m[1, 1], m[1, 2]],
                     [m[2, 0], m[2, 1], m[2, 2]]
                 ], dtype=np.float32)
 
-                translation_list = np.array([m[0, 3], m[1, 3], m[2, 3]], dtype=np.float32).reshape(-1, 1)
-                R, _ = cv2.Rodrigues(rotation_list)
+                translation_vect = np.array([m[0, 3], m[1, 3], m[2, 3]], dtype=np.float32).reshape(-1, 1)
+                R, _ = cv2.Rodrigues(rotation_param)
 
+                #Ustalenie marginesu w jakim szuka się się tego środka szachownicy (Nie za dużo bo kostka brukowa to mocny rywal)
                 margin = 30
 
-                points_2d, _ = cv2.projectPoints(xyz, R, translation_list, K, dist)
+                points_2d, _ = cv2.projectPoints(xyz, R, translation_vect, K, dist)
                 proj_x, proj_y = points_2d[0][0]
 
+                #Zabezpieczenie przed wyjściem
                 if not (margin < proj_x < sensor.width - margin and margin < proj_y < sensor.height - margin):
                     continue
 
@@ -263,6 +278,7 @@ class MyApp(QtWidgets.QMainWindow):
                 x_end = int(proj_x + margin)
                 y_end = int(proj_y + margin)
 
+                #Ustalamy nasz zakres na zdjęciu gdzie szukamy
                 roi = img[y_start:y_end, x_start:x_end]
                 kp = fast.detect(roi, None)
 
@@ -271,6 +287,7 @@ class MyApp(QtWidgets.QMainWindow):
 
                 center_roi_x, center_roi_y = margin, margin
 
+                #Sprawdzamy, który z wykrytych punków przez algorytm jest najlepszy, najbliższy środka
                 for k in kp:
                     dx = k.pt[0] - center_roi_x
                     dy = k.pt[1] - center_roi_y
@@ -279,30 +296,38 @@ class MyApp(QtWidgets.QMainWindow):
                         min_dist_local = d
                         best_kp = k
 
+                #Ostateczne ustalenie najlepszego i zapisanie
                 if best_kp and min_dist_local < 15:
                     final_x = x_start + best_kp.pt[0]
                     final_y = y_start + best_kp.pt[1]
 
+                    #Zmieniamy współrzędne x, y
                     marker.projections[camera] = Metashape.Marker.Projection(Metashape.Vector([final_x, final_y]), pinned=True)
 
+        #Odświeżamy widok i przeprowadzamy ostateczną orientację
         self.chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_k1=True, fit_k2=True, fit_k3=True,
                                    fit_p1=True, fit_p2=True)
         self.chunk.updateTransform()
 
     def check_greens(self):
+        #Funkcja do sprawdzenia czy użytkownik wyklikał już te 3 punkty na 3 zdjęciach
         fully_green = 0
+        #Sprawdzamy co jakiś czas ile markerów jest pomierzonych z tych co mamy
         for marker in self.chunk.markers:
             if not marker.projections:
                 continue
-
             green_on_this_marker = 0
+
+            #Sprawdzenie czy dany marker jest pomierzony na 3 kamerach
             for camera, projection in marker.projections.items():
                 if projection.pinned:
                     green_on_this_marker += 1
 
+            #Jeżeli jest 3 to wtedy dodajemy ilość ogólnych "zielonych" markerów
             if green_on_this_marker >= self.required_photos_measured:
                 fully_green += 1
 
+        #Jeśli są 3 "zielone" to przepuszczamy dalej. Następnie zatrzymanie sprawdzania i wiadomość z wyborem dla użytkownika
         if fully_green >= self.required_green_markers:
             self.advanced_monitor_timer.stop()
             self.msg.setWindowTitle("Czas decyzji")
@@ -312,9 +337,11 @@ class MyApp(QtWidgets.QMainWindow):
             self.msg.setDefaultButton(QtWidgets.QMessageBox.Yes)
             result = self.msg.exec_()
 
+            #Jeżeli użytkownik wybierze opcję nie to zwiększamy ilość "zielonych" aby można było pomierzyć więcej
             if result == QtWidgets.QMessageBox.No:
                 self.advanced_monitor_timer.start(self.check_interval)
                 self.required_green_markers += 1
+            #jeśli tak to obliczamy jeszcze raz i przechodzimy do następnej części
             elif result == QtWidgets.QMessageBox.Yes:
                 self.chunk.optimizeCameras(
                     fit_f=True, fit_cx=True, fit_cy=True,
@@ -325,57 +352,21 @@ class MyApp(QtWidgets.QMainWindow):
 
                 self.next_part()
 
-    def przetwarzankoZDJ(self):
-        accuracy_match_photos = self.ui.chooseQualityOrient.currentText()
-        ####################################################################
-
-        Metashape.app.update()
-
-        self.chunk.matchPhotos(downscale=self.tellQualityInt(accuracy_match_photos), generic_preselection=False,
-                               reference_preselection=False)
-        self.chunk.alignCameras()
-
-        length = self.count_ref_markers()
-
-        self.chunk.detectMarkers(target_type=Metashape.TargetType.CrossTarget, tolerance=10)
-
-        current_markers = list(self.chunk.markers)
-
-        if len(current_markers) > length:
-            current_markers.sort(key=lambda m: len(m.projections))
-            to_remove_count = len(current_markers) - length
-            markers_to_remove = current_markers[:to_remove_count]
-
-            for marker in markers_to_remove:
-                self.chunk.remove(marker)
-
-        for marker in self.chunk.markers:
-            for camera, projection in marker.projections.items():
-                projection.pinned = False
-                marker.projections[camera] = projection
-
-        self.advanced_monitor_timer.timeout.connect(self.check_greens)
-        self.advanced_monitor_timer.start(self.check_interval)
-
-        self.check_greens()
-
-    def next_part(self):
-        accuracy_point_cloud = self.ui.chooseQualityCloudPoint.currentText()
-        accuracy_model_3d = self.ui.chooseQualityModel.currentText()
+    def change_crsys(self):
+        #Funkcja do zmiany współrzędnych
         epsg_geo_net = self.ui.coordsEdit2.text()
-        epsg_geo_net_full = f"EPSG::{epsg_geo_net}"
-        crs_geo_net = Metashape.CoordinateSystem(epsg_geo_net_full)
-        photo_path = self.ui.filePhotosEdit.text()
         epsg_photos = self.ui.coordsEdit1.text()
         epsg_end = self.ui.coordsEdit3.text()
 
         epsg_photos_full = f"EPSG::{epsg_photos}"
+        epsg_geo_net_full = f"EPSG::{epsg_geo_net}"
         epsg_end_full = f"EPSG::{epsg_end}"
 
         crs_photos = Metashape.CoordinateSystem(epsg_photos_full)
+        crs_geo_net = Metashape.CoordinateSystem(epsg_geo_net_full)
         crs_end = Metashape.CoordinateSystem(epsg_end_full)
 
-        _ = self.import_r_markers()
+        self.import_r_markers()
 
         if epsg_geo_net != epsg_end:
             for marker in self.chunk.markers:
@@ -393,13 +384,31 @@ class MyApp(QtWidgets.QMainWindow):
                 final_camera_location = Metashape.CoordinateSystem.transform(camera_location, crs_photos, crs_end)
                 camera.reference.location = final_camera_location
 
+        #Mówimy Metashape, że teraz już te wszystkie rzeczy są w takich układach
         self.chunk.crs = crs_end
         self.chunk.camera_crs = crs_end
         self.chunk.marker_crs = crs_end
 
-        self.merge_markers()
-        self.detect_rest_from_fast()
-        self.export_eo()
+    def export_eo(self):
+        #Funkcja do eksportu orientacji zewnętrznej
+        photo_path = self.ui.filePhotosEdit.text()
+        path = os.path.join(photo_path, "exteriorOrientation.txt")
+
+        self.chunk.exportReference(
+            path=path,
+            format=Metashape.ReferenceFormatCSV,
+            items=Metashape.ReferenceItemsCameras,
+            columns="nuvwdef",  # n=Label, u/v/w=estimated coordinates, d/e/f=estimated coordination angles
+            delimiter=",",
+            precision=6
+        )
+
+        print(f"Zapisano orientację do: {path}")
+
+    def make_pc_model(self):
+        #Tworzymy chmurę punktów i model w zależności od tego co uzytkownik sobie wybierze
+        accuracy_point_cloud = self.ui.chooseQualityCloudPoint.currentText()
+        accuracy_model_3d = self.ui.chooseQualityModel.currentText()
 
         if self.ui.modelBox.isChecked():
             if accuracy_point_cloud == accuracy_model_3d:
@@ -421,7 +430,54 @@ class MyApp(QtWidgets.QMainWindow):
                                       interpolation=Metashape.EnabledInterpolation)
                 self.chunk.buildUV(mapping_mode=Metashape.GenericMapping)
 
-        # save document
+    def first_part(self):
+        accuracy_match_photos = self.ui.chooseQualityOrient.currentText()
+        Metashape.app.update()
+
+        self.chunk.matchPhotos(downscale=self.tellQualityInt(accuracy_match_photos), generic_preselection=False, reference_preselection=False)
+        self.chunk.alignCameras()
+
+        length = self.count_ref_markers()
+
+        #Automatyczna detekcja markerów
+        self.chunk.detectMarkers(target_type=Metashape.TargetType.CrossTarget, tolerance=10)
+
+        #Otóż detectMarkers nie zależnie od tego jaką dostanie mniejszą tolerancję (ostrzejszą) to i tak znajduje za dużo punktów
+        #więc usuwamy nadmiarową ich liczbę tak aby później można było to połączyć z punktami referencyjnymi
+        #Usuwamy te które zostały wykryte na jak najmniejszej liczbie zdjęć (Można też od końca ale ryzykowne, ale też działało jak testowałem)
+        current_markers = list(self.chunk.markers)
+        if len(current_markers) > length:
+            current_markers.sort(key=lambda m: len(m.projections))
+            to_remove_count = len(current_markers) - length
+            markers_to_remove = current_markers[:to_remove_count]
+
+            for marker in markers_to_remove:
+                self.chunk.remove(marker)
+
+        #Ręczne nadanie markerom "niebieskiej" flagi, mimo, że teoretycznie taką powinny mieć po detectMarkers, ale czasami to nie działało bez tego
+        for marker in self.chunk.markers:
+            for camera, projection in marker.projections.items():
+                projection.pinned = False
+                marker.projections[camera] = projection
+
+        #Wyświetlenie okienka, aby użytkownik wiedział, że musi pomierzyć punkty i rozpoczęcie timera sprawdzającego "zielone markery"
+        self.show_info("Pomierz conajmniej 3 punkty na 3 zdjęciach.")
+        self.advanced_monitor_timer.timeout.connect(self.check_greens)
+        self.advanced_monitor_timer.start(self.check_interval)
+
+        self.check_greens()
+
+    def next_part(self):
+        photo_path = self.ui.filePhotosEdit.text()
+
+        #Uruchomienie pozostałych funkcji w kolejności, tak aby wszystko zadziałało
+        self.change_crsys()
+        self.merge_markers()
+        self.detect_rest_from_fast()
+        self.export_eo()
+        self.make_pc_model()
+
+        #Zapis całego projektu i zamknięcie okienka, tak aby było wiadomo, że to już koniec
         document_name = "wtykaFTP.psx"
         document_path = os.path.join(photo_path, document_name)
         self.doc.save(document_path)
@@ -438,7 +494,9 @@ def show_window():
 
     app_window.show()
 
+#Inicjalizacja całego kodu
 def init_menu():
+    Metashape.app.removeMenuItem("FTP")
     Metashape.app.addMenuItem("FTP", show_window)
 
 init_menu()

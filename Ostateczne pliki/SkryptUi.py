@@ -1,6 +1,7 @@
 from PySide2.QtCore import (QCoreApplication, QMetaObject, QRect)
 from PySide2.QtWidgets import (QCheckBox, QComboBox, QLabel,QLineEdit, QMainWindow, QMenu, QMenuBar,QPushButton,  QStatusBar, QWidget)
 
+#Klasa z całym ui
 class Ui_WtykaFTP(object):
     def setupUi(self, WtykaFTP):
         if not WtykaFTP.objectName():
