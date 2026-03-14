@@ -20,5 +20,3 @@ Jest także moment, w którym na ekranie nic nie jest pokazane oprócz okienka p
 Momentem zakończenia działania powinien być moment kiedy zamknie się okienko z wyborem rzeczy do uruchomienia automatycznego skryptu.
 
 Koniec.
-
-- Filip Kędzior, 331914
